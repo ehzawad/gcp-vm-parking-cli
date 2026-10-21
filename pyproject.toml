@@ -4,12 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "gcp-vm-parking-cli"
-version = "0.1.0"
+version = "0.2.0"
 description = "Conservative, identity-pinned Google Cloud GPU VM lifecycle CLI"
 requires-python = ">=3.10"
 dependencies = []
 
 [project.scripts]
+l4 = "l4ctl.cli:entry"
 l4ctl = "l4ctl.cli:entry"
 
 [tool.setuptools.packages.find]

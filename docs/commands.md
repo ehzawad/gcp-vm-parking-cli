@@ -1,51 +1,33 @@
-# Useful commands
+# Everyday commands
 
-Run these from the repository checkout with Python 3.10+; no package installation is necessary. Global options such as `--execute`, `--project`, and `--state-dir` go before the subcommand. No live mutating command below was run during development/publication.
+After configuration, `l4 init`, and installing the collision-safe launcher described in the README:
 
-Safe offline commands need no credentials or configuration:
+```sh
+l4 status
+l4 snapshots
+l4 storage
+l4 up
+l4 stop
+l4 park
+l4 storage add large-job 200
+l4 recover
+```
+
+Reads run directly. Changes show a plan and ask for `[y/N]` in a terminal; the default is cancel. Stop keeps every disk. Park requires an additional exact disk/ID deletion phrase after backup verification. Use `l4 --plan up`, `l4 --plan park`, or `l4 --plan storage add large-job 200` to preview explicitly. Without a terminal no cloud mutation executes, even with legacy `--execute`.
+
+Existing snapshots can be verified and registered without changing cloud resources:
+
+```sh
+l4 snapshots import existing-backup
+l4 --plan test-restore existing-backup --disk restore-check
+```
+
+Registration does not assert a tested restore. `up` starts the original disk while it is attached, and restores the recorded snapshot only after a completed CLI park. Restore tests allocate billable resources and must be separately approved.
+
+From an uninstalled checkout use `python3 -m l4ctl` instead of `l4`, with global `--config /path/to/private/config.local.json` or explicit target flags. Offline commands need neither credentials nor configuration:
 
 ```sh
 python3 -m l4ctl --help
 python3 -m l4ctl --fixture examples/stopped.json status
 python3 -m l4ctl --fixture examples/stopped.json park
 ```
-
-Before live reads, configure your existing resources and existing gcloud identity. Replace these illustrative values; do not create credentials just to run the CLI:
-
-```sh
-export L4CTL_PROJECT=your-project-id
-export L4CTL_ZONE=asia-southeast1-c
-export L4CTL_VM=your-existing-gpu-vm
-python3 -m l4ctl status
-python3 -m l4ctl init
-```
-
-Enrollment writes local state only, requiring the real numeric IDs printed by the init preview:
-
-```sh
-python3 -m l4ctl --execute init --vm-id ACTUAL_VM_ID --boot-id ACTUAL_BOOT_DISK_ID
-```
-
-Previews are the default and do not mutate cloud resources:
-
-```sh
-python3 -m l4ctl up
-python3 -m l4ctl stop --after keep
-python3 -m l4ctl park
-python3 -m l4ctl storage
-python3 -m l4ctl work-disk create large-job --size 200
-python3 -m l4ctl recover
-```
-
-After enrollment and review, these execute cloud changes:
-
-```sh
-python3 -m l4ctl --execute up
-python3 -m l4ctl --execute stop --after keep
-python3 -m l4ctl --execute park
-python3 -m l4ctl --execute work-disk create large-job --size 200
-python3 -m l4ctl --execute work-disk attach large-job
-python3 -m l4ctl --execute recover
-```
-
-`stop --after keep` retains every disk. `park` stops, snapshots, verifies the exact source and then requires a typed destructive confirmation before detach/delete. Enter/cancel keeps source data. New work disks are blank; attachment changes require the VM stopped, and formatting/mounting remains deliberate guest administration. `up` restores a parked boot disk before starting it. `recover` reconciles an uncertain operation without resending it, then may execute unsent remaining steps; inspect the journal first. Installation and Linux guest templates are separate steps described in the README.

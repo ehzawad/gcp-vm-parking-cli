@@ -1,138 +1,108 @@
-# L4 lifecycle CLI (workspace preview)
+# L4 GPU VM lifecycle CLI
 
-This Python CLI manages a selected existing Google Cloud GPU VM. The included target `example-project / asia-southeast1-c / gpu-vm` is illustrative. It retains an existing **70 GB or larger boot disk**, allows small jobs to use its available filesystem space, and adds independent work disks only when needed. Python 3.10+ is required; there are no runtime Python dependencies.
+Simple commands for an existing Google Cloud GPU VM. Keep its 70 GB or larger boot disk for small workloads, add optional work disks for large jobs, and park storage behind a verified snapshot when explicitly approved.
 
-**Implementation/testing used mocks and offline fixtures only. No cloud resource was changed, no credentials were read by a test, and no installed command was replaced. A real restore has not been tested.** The example numeric IDs are synthetic; enrollment must discover and explicitly pin the real IDs later.
+## Everyday commands
 
-## Try it safely now
+After configuration and local enrollment:
 
-From the repository directory:
+```sh
+l4 status                    # Read current VM/disk identities
+l4 snapshots                 # Read snapshots and their stored sizes
+l4 up                        # Show a plan, then ask before start/restore
+l4 stop                      # Show a plan, then stop and KEEP all disks
+l4 park                      # Snapshot, verify, then require exact deletion text
+l4 storage                   # Read capacity and storage-cost formulas
+l4 storage add large-job 200  # Plan a separate 200 GB work disk, then ask
+l4 recover                   # Show an unfinished plan, then ask to reconcile it
+```
+
+**Terminal commands show a readable plan and ask `[y/N]` before cloud changes. Enter, EOF, or cancellation keeps data.** `l4 stop` retains all disks. `l4 park` additionally requires the full `DELETE projects/.../disks/NAME id=NUMERIC_ID` phrase after snapshot verification; a generic yes never approves disk removal. Stopping, retaining a snapshot, and deletion are separately visible plan steps.
+
+Use explicit plan mode whenever you only want to inspect:
+
+```sh
+l4 --plan up
+l4 --plan park
+l4 --plan storage add large-job 200
+```
+
+`--dry-run` aliases `--plan`. Without an interactive terminal, mutation commands print **PLAN ONLY** and send no mutation, even with legacy `--execute`. The flag does not bypass terminal approval. Every default, plan-only, fixture and cancellation path is tested with mocked mutations.
+
+## Setup and optional launcher
+
+Python 3.10+ and the user's existing gcloud login are required for live reads. There are no third-party Python runtime dependencies. No login, credential creation, security changes, shell-profile editing or replacement of existing VM/storage commands is performed.
+
+From the checkout, these commands work without installation or credentials:
 
 ```sh
 python3 -m l4ctl --help
 python3 -m l4ctl --fixture examples/stopped.json status
-python3 -m l4ctl --fixture examples/stopped.json up
-python3 -m l4ctl --fixture examples/stopped.json stop --after keep
 python3 -m l4ctl --fixture examples/stopped.json park
 python3 -m unittest discover -v
 ```
 
-Every command defaults to **dry run**. `--dry-run` is also explicit. Fixture mode is offline and rejects `--execute`. A preview may create a local lock directory; it does not write enrollment state or a lifecycle journal. A live preview reads the API using the existing gcloud identity. Put global flags **before** the command.
+Fixture mode is always offline and rejects `--execute`. It uses the fixture's target independently of private live configuration. It may create a local lock file, but never writes lifecycle state or sends requests for the plan.
 
-## Enrollment and future use
+Configure actual existing resources with `L4CTL_PROJECT`, `L4CTL_ZONE`, `L4CTL_VM`, global flags, or a private JSON file outside the repository. Example `config.local.json` (ignored; use your actual values):
 
-The repository contains generic defaults. Set `L4CTL_PROJECT`, `L4CTL_ZONE`, and `L4CTL_VM` to your actual existing resources before live reads or execution; alternatively pass global `--project`, `--zone`, and `--vm` flags. Use the same target and state directory consistently. Offline fixture commands require no configuration.
+```json
+{
+  "project": "your-project-id",
+  "zone": "asia-southeast1-c",
+  "vm": "your-existing-gpu-vm",
+  "state_dir": "/absolute/private/path/to/l4-state"
+}
+```
 
-These are migration/use examples, **not actions performed during implementation**. Keep one durable state directory for the target and back it up. The default is `.l4-state` beside the source tree; use an absolute `--state-dir` if you relocate/install the package. Do not run concurrent copies with different state directories.
+Install only a new lightweight launcher in an **existing user-owned directory already on PATH**:
 
 ```sh
-# Read-only discovery, using existing gcloud authentication.
-python3 -m l4ctl init
-
-# Locally pin IDs from that preview. Replace these placeholders with actual IDs.
-python3 -m l4ctl --execute init --vm-id ACTUAL_VM_ID --boot-id ACTUAL_BOOT_DISK_ID
-
-# Start the existing VM, or recreate its parked boot disk then attach/start it.
-python3 -m l4ctl up
-python3 -m l4ctl --execute up
-
-# Stop compute; keep every disk and snapshot.
-python3 -m l4ctl --execute stop --after keep
-
-# Keep a backup and the source disk (VM must already be stopped).
-python3 -m l4ctl --execute snapshot --name chosen-boot-backup
-
-# Stop, snapshot, verify, then ask before removing the boot disk.
-python3 -m l4ctl park
-python3 -m l4ctl --execute park --snapshot chosen-park-backup
+python3 tools/install_launcher.py --bin-dir ~/.local/bin --config /absolute/private/config.local.json
+l4 --help
+l4 init
 ```
 
-`on`/`start` alias `up`; `off` aliases `stop`. Interactive invocation without a command shows a menu. Interactive `stop` offers keep (Enter/default), snapshot-and-keep, snapshot-and-park, or cancel. Noninteractive `stop` defaults to keep. `stop --after keep` has no deletion path. Cancellation keeps source data; cancellation during recovery can leave a source disk detached, and `up` can reattach the pinned boot disk.
+The installer refuses any existing `l4` command or path, including broken symlinks. It does not change PATH, shell files, existing commands, authentication or system settings. The source checkout and private config must stay at their installed paths; move them only with a reviewed launcher update. `l4 init` reads the VM/disk identities and asks before pinning them locally. The selected VM must have exactly one existing boot disk of at least 70 GB. Explicit matching `--vm-id` and `--boot-id` with `--execute init` can authorize this local-only write without a terminal.
 
-Parking asks for this entire phrase **after the snapshot has completed and been verified**:
+Global options go before the subcommand. Explicit flags override environment values, which override private config, then generic examples. Use one durable state directory for each target; do not operate multiple independent state directories concurrently.
 
-```text
-DELETE projects/example-project/zones/asia-southeast1-c/disks/gpu-vm-boot-70gb id=ACTUAL_DISK_ID
-```
-
-Enter/cancel retains the disk and the new snapshot. Automation must provide the same exact phrase through global `--confirm-delete`; there is no generic `--yes`. This design does not treat prior discussion as deletion approval. Previewing `park` never asks for or stores approval.
-
-## What park/up preserve
-
-`park` keeps the **stopped VM object**, including GPU/machine configuration, networking, service account and metadata. It snapshots only the selected boot disk, verifies the snapshot's READY status, numeric snapshot ID, exact `sourceDisk` URI, numeric `sourceDiskId`, and original disk size. It checks VM restart/disk reattachment timestamps before removal. After confirmation it detaches the boot disk, confirms it is unused, and deletes that exact currently pinned disk name/ID. Work disks remain independent and billed until separately managed.
-
-`up` recreates a zonal disk from the recorded snapshot before attaching it. A snapshot cannot itself be a boot disk. Restore size is at least the source snapshot size, the recorded original disk size, and 70 GB for boot. Disk type, device name, interface and boot auto-delete policy are retained; the current boot disk's auto-delete policy is **true**. VM deletion remains outside this CLI. A restored disk receives a new numeric disk ID, which is pinned after source-snapshot ID verification.
-
-The VM configuration is compared to the enrollment record before execution; drift fails closed. Startup scripts/metadata contents, tokens and encryption keys are excluded from local state. Configuration preservation comes from retaining the VM rather than recreating it. This CLI does not support managed-instance-group automation, Local SSD workflows, customer-supplied encryption keys, or replacing a missing VM.
-
-RUNNING means Compute Engine reports that state. SSH, Docker, GPU drivers and application readiness are not implied. Continue using existing `ssh l4-vm` or the installed `l4-vm ssh`; nothing here changes SSH configuration or keys. Suspend/resume is supported for `up`; parking requires stable RUNNING/TERMINATED status.
-
-## Independent work disks and storage
+## Snapshot list/import and restore
 
 ```sh
-python3 -m l4ctl storage
-python3 -m l4ctl work-disk list
-python3 -m l4ctl --execute work-disk create large-job --size 200
-# Attachment changes require the VM stopped. New disks have auto-delete=false.
-python3 -m l4ctl --execute work-disk attach large-job
-python3 -m l4ctl --execute up
-
-# Later: stop/keep, independently snapshot/remove the work disk after confirmation.
-python3 -m l4ctl --execute stop --after keep
-python3 -m l4ctl --execute snapshot large-job --name chosen-work-backup
-python3 -m l4ctl --execute work-disk detach large-job
-python3 -m l4ctl --execute work-disk remove large-job --snapshot another-work-backup
-python3 -m l4ctl --execute work-disk restore large-job
-python3 -m l4ctl --execute work-disk attach large-job
+l4 snapshots
+l4 snapshots import existing-backup
+l4 --plan test-restore existing-backup --disk restore-check
 ```
 
-`work-disk remove` always creates its own verified backup before removal and requires the exact disk phrase. The boot name, boot numeric ID, and any boot attachment are protected from work/test removal. Disks created here are blank: formatting and mount setup are deliberate guest administration steps, never automatic. See [guest configuration](docs/guest-storage.md) before using `/work`.
+Import verifies READY standard-snapshot metadata, exact snapshot/source URIs and numeric IDs, source size and the enrolled disk identity. It registers the backup locally and records **restore_verified=false**. Import sends no cloud mutation. It also checks source-attachment/VM-start timestamps before allowing an imported copy to qualify for any source-removal check; stale or missing freshness information cannot approve removal. Passing `--id EXPECTED_NUMERIC_ID` prevents name-reuse adoption. A matching ID with `--execute snapshots import` authorizes only the local registration.
 
-`storage TOTAL_GB` previews permanent boot-disk growth; `--execute` grows only cloud capacity. It never shrinks the disk. It does **not** expand the guest partition/filesystem or claim the space is usable. The existing `l4-storage TOTAL_GB` handles checked guest expansion; after new CLI capacity growth, run the installed helper at that same total size while the VM is running. Do not use both tools concurrently. No resize is necessary for the retained 70 GB setup.
+`up` has no snapshot argument. With the original boot disk attached, it starts that original disk after confirmation. After a completed CLI park, it creates a new disk from the recorded snapshot, verifies `sourceSnapshotId`, attaches it, and starts the preserved VM after plan approval. Restore size is at least 70 GB and the original source size. A snapshot itself cannot boot. Boot disk type, interface, device name and original auto-delete policy are retained. The VM object, metadata, GPU/machine settings and networking are preserved; configuration drift fails closed. RUNNING does not imply SSH, GPU-driver, Docker or application readiness.
 
-`storage` reports provisioned capacity, not guest free space. Inspect `df -h /` in an existing SSH session to decide whether a small job fits. Boot space holds the OS, installed software, and small workloads together.
+**READY is not a tested restore.** The separate `test-restore` plan allocates an unattached disk, preserving source and snapshot. It verifies creation/source identity only. Filesystem checks, known-file checksums, application recovery and isolated boot testing require separately approved temporary resources. Avoid mounting duplicate filesystem UUIDs together on production. Test disks remain billed until exact-confirmation `test-cleanup NAME`; attached test disks cannot be cleaned up. No snapshot pruning exists. No live restore/boot test has been performed.
 
-## Billing estimates
+## Work disks and boot space
 
-No prices are hard-coded or fetched as if live. A stopped VM's disks and snapshots remain billable. Parking avoids the boot disk's allocation cost **only after deletion**, and restoration allocates at least 70 GB again. Work and test disks, reserved/external IPs, transfer and other resources can still cost money.
+`l4 storage` reports provisioned allocation, not guest filesystem free space. Inspect `df -h /` in an existing SSH session to decide whether a small workload fits. No shrink to 50/60 GB is attempted.
 
-`storage --disk-rate VERIFIED_RATE --snapshot-rate VERIFIED_RATE --price-source 'URL checked YYYY-MM-DD'` calculates tracked storage estimates using user-supplied per-GiB-month rates. `--currency` labels the currency (default USD). Disk estimates use allocation; snapshot estimates use currently reported `storageBytes / 2^30`. This is a full-month approximation for enrolled storage only, excluding compute/GPU usage, IPs, licenses, transfer, tax and discounts. Incremental snapshot allocation can change; snapshot cost is not simply 70 × the disk rate. Review [current regional pricing](https://cloud.google.com/compute/disks-image-pricing) and your actual billing export. No automatic snapshot pruning is implemented.
+`l4 storage add NAME SIZE_GB` creates a blank independent balanced work disk after approval. `l4 work-disk attach NAME` attaches it while stopped, with auto-delete false. Formatting and mounting are explicit guest-administration steps. `work-disk detach`, `work-disk remove` and `work-disk restore` are separately scoped. Removal snapshots/verifies the selected work disk and then requires exact deletion text; boot name, numeric ID and boot attachments are protected.
 
-## Crash recovery
+`l4 storage TOTAL_GB` permanently grows cloud boot capacity after confirmation; it does not expand the guest partition/filesystem or claim the space is usable. Use an existing checked guest-growth procedure separately. Do not operate an old helper concurrently with this CLI.
 
-The per-target kernel lock serializes this CLI. State and journal writes use atomic replacement, file fsync and directory fsync, with mode 0600. Each step has a UUID `requestId`; the submitting record is durable **before** any mutation request. The operation URI is saved when returned, polled with a bounded timeout, and followed by resource verification.
+See [guest storage](docs/guest-storage.md) for fail-closed `/work` cache/Docker guards, explicit small-workload boot mode and token-path separation. Those Linux templates are not automatically installed or claimed to be live-tested. Docker's separate containerd image store must be explicitly accounted for; the supplied guard refuses unreviewed storage fallback.
 
-```sh
-python3 -m l4ctl recover                    # read saved journal
-python3 -m l4ctl --execute recover          # poll/reconcile, then continue unsent steps
-python3 -m l4ctl --execute recover --cancel-pending
-```
+## Recovery and safety limits
 
-`recover` never resends an uncertain request. With a known operation it polls that same URI. With a lost response it inspects the postcondition; created disks/snapshots must carry the original operation label and exact source IDs. If a postcondition cannot prove completion, recovery stops and the journal blocks new mutation plans. **Do not delete/edit the journal to force a retry.** Inspect the saved operation and provider audit logs first. An explicit failed operation closes as failed without issuing subsequent steps. Pending-only cancellation closes unsent steps locally and refuses submitting/uncertain steps. New execution archives the previous closed journal under `history/`.
+Per-target kernel locking, private atomic/fsynced state, UUID request IDs and a durable submitting record precede every mutation. Returned operation URIs are pinned, polled with timeouts and followed by identity/postcondition checks. Created resources carry an operation label. Uncertain requests are never automatically resent; recovery polls the same operation or proves the postcondition. A failure or unprovable result stops for inspection. Never delete a journal to force a retry.
 
-Destructive approval is held only in memory, so a resumed pending delete asks again. Before sending it, the CLI rechecks stopped state, usage, IDs, boot protection, backup source and freshness, including after the user types confirmation. Completed local effects replay idempotently if a crash occurred between journal and state writes.
+`l4 recover` displays the saved steps and asks before reconciling/continuing unsent steps. `l4 recover --cancel-pending` can cancel only unsent steps after completed local effects replay; any submitting/uncertain request blocks cancellation. Destructive approval is not saved across processes. Stopped state, users, exact IDs/URIs, boot protection, snapshot provenance and backup freshness are rechecked after confirmation and immediately before requests.
 
-The lock cannot prevent changes made in the console, by the old scripts, another machine or another state directory. Compute disk deletion uses a resource name and does not provide an ID precondition in this implementation; a small check/request race remains against an independent actor deleting/recreating that name. Coordinate exclusive maintenance before destructive operations. A manual change, missing state, reused name, failed API read, expired login/token or ambiguous outcome fails closed for inspection. HTTP/API mutation calls are never automatically retried.
+The lock cannot coordinate console changes, another machine or another state directory. Disk deletion uses a resource name; numeric-ID rechecks cannot atomically exclude an external name-reuse race between check and request. Maintain exclusive administration during destructive maintenance. Manual drift, missing state, failed reads and expired authentication fail closed. No VM deletion, missing-VM recreation, Local SSD parking, managed-instance-group management or customer-supplied encryption-key workflow is implemented.
 
-## Separate test-restore workflow
+## Cost and verification
 
-Snapshot READY proves completion, **not** filesystem integrity, bootability, application consistency or recoverability. A stopped VM gives a quiescent copy but does not validate an application's prior shutdown. For important data, test recovery before parking away the source.
+Disks remain billed while stopped. Parking avoids the source allocation charge only after its deletion; snapshots, retained work/test disks and other resources remain billable. No prices are fabricated or hard-coded as live quotes. `storage --disk-rate RATE --snapshot-rate RATE --price-source 'URL checked DATE'` estimates enrolled storage from user-verified regional per-GiB-month rates. Snapshot allocation uses reported `storageBytes/2^30`, which may change with incremental allocation. Compute/GPU hours, IPs, transfer, licenses, tax and discounts are excluded. See [Google pricing](https://cloud.google.com/compute/disks-image-pricing).
 
-1. Retain the source disk, stop the VM, create an enrolled snapshot with `snapshot --name chosen-backup`.
-2. Preview `python3 -m l4ctl test-restore chosen-backup --disk l4-restore-check`.
-3. After separately approving test allocation/cost, use `--execute test-restore ...`. This creates an unattached disk at least the snapshot's original size and verifies its `sourceSnapshotId`; it does not mark the backup as tested.
-4. In an isolated inspection environment, attach that **test copy**, check filesystem health without repair/write, mount read-only using filesystem-appropriate options, compare known file checksums, and perform application recovery checks on disposable copies. Avoid exposing duplicate filesystem UUIDs together on a production guest. If bootability matters, separately authorize a temporary isolated VM boot using the copy and appropriate original architecture/settings. Never replace the production boot disk for this test.
-5. Record actual observations, IDs and date. No such live filesystem or boot test was run during implementation.
-6. Detach the copy from any inspector. `--execute test-cleanup l4-restore-check` removes only the pinned unused test disk with exact confirmation, retaining its snapshot. Cleanup refuses attached disks. Test disks accrue charges until explicitly removed.
+The live transport captures a token from existing gcloud authentication in memory, never logs/saves it, and uses Compute REST async operations. Metadata contents, encryption-key fields, tokens and local configuration are excluded from committed data. The repository has generic examples only.
 
-## Compatibility and delivery
-
-Compatibility inspection of pre-existing local lifecycle, storage and SSH helpers was read-only. None were replaced. Existing `on` starts/resumes; existing `off` keeps disks; existing `storage` grows boot storage. The published package uses `L4CTL_PROJECT`, `L4CTL_ZONE`, and `L4CTL_VM` environment variables or the corresponding global flags. Enrollment pins the selected VM and boot disk by numeric ID.
-
-The live transport captures `gcloud auth print-access-token` from the already configured gcloud identity in memory and uses Compute REST async operations. It never logs tokens, invokes login, creates credentials, changes gcloud configuration, or saves credential files. Missing authentication stops execution. Tests and fixture previews do not invoke gcloud or access the network.
-
-Keep using `python3 -m l4ctl` from this directory until an installation/migration is explicitly approved. Packaging metadata is supplied for future installation as `l4ctl`; no installation was performed. Do not replace existing symlinks until enrollment, preview review and separately authorized live validation succeed. The guest helper/drop-ins are templates; they were not copied to the VM.
-
-See [engineering references](docs/engineering-guidance.md), [critical review](docs/safety-review.md), and [verification evidence](docs/verification.md).
-
-For a compact reference, see [useful commands](docs/commands.md).
+See [commands](docs/commands.md), [engineering references](docs/engineering-guidance.md), [safety review](docs/safety-review.md), and [verification](docs/verification.md). Local launcher resolution and real read-only status/snapshot reads are checked separately from mocked lifecycle execution. No live restore, start, attachment or deletion was run as part of the UX verification.

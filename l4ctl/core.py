@@ -13,6 +13,8 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+from datetime import datetime
+from urllib.parse import urlencode
 from contextlib import contextmanager
 from dataclasses import dataclass
 
@@ -127,6 +129,20 @@ class ComputeCloud:
     def get(self, path):
         return self.request("GET", path)
 
+    def list_snapshots(self, project, disk_ids):
+        results = []
+        for disk_id in disk_ids:
+            require(bool(re.fullmatch(r"[0-9]+", str(disk_id))), "Invalid source disk ID.")
+            query = {"filter": f'sourceDiskId = "{disk_id}"'}
+            while True:
+                page = self.get(f"projects/{project}/global/snapshots?" + urlencode(query))
+                require(isinstance(page, dict), "Cannot list snapshots.")
+                results.extend(page.get("items", []))
+                if not page.get("nextPageToken"):
+                    break
+                query["pageToken"] = page["nextPageToken"]
+        return results
+
     def mutate(self, method, path, body, request_id):
         return self.request(method, path + ("&" if "?" in path else "?") + "requestId=" + request_id, body)
 
@@ -138,6 +154,11 @@ class FixtureCloud:
 
     def get(self, path):
         return copy.deepcopy(self.resources.get(path))
+
+    def list_snapshots(self, project, disk_ids):
+        return [copy.deepcopy(r) for p, r in self.resources.items()
+                if p.startswith(f"projects/{project}/global/snapshots/") and
+                str(r.get("sourceDiskId")) in {str(i) for i in disk_ids}]
 
     def prepare(self):
         raise SafetyError("Fixture mode is read-only; --execute cannot send requests.")
@@ -258,6 +279,37 @@ class Planner:
         require(record["name"] == disk_name, "Wrong enrolled disk name.")
         return copy.deepcopy(record)
 
+    def import_snapshot(self, snapshot_name, expected_id=None):
+        """Verify provider metadata for local registration; never claim a restore test."""
+        name(snapshot_name)
+        require(self.state is not None, "Enroll the VM first.")
+        snap = self.cloud.get(self.t.path("snapshots", snapshot_name))
+        require(snap and relative(snap["selfLink"]) == self.t.path("snapshots", snapshot_name), "Snapshot not found or wrong URI.")
+        snap_id = rid(snap)
+        require(expected_id is None or str(expected_id) == snap_id, "Snapshot numeric ID differs from the requested ID.")
+        require(snap.get("status") == "READY" and snap.get("snapshotType", "STANDARD") == "STANDARD", "Import requires a READY standard snapshot.")
+        records = [self.state["boot"], *self.state["work"].values()]
+        source = next((d for d in records if str(d["id"]) == str(snap.get("sourceDiskId")) and
+                       relative(snap["sourceDisk"]) == self.t.path("disks", d["name"])), None)
+        require(source is not None, "Snapshot source is not an enrolled disk's exact name/ID.")
+        require(int(snap["diskSizeGb"]) == int(source["sizeGb"]), "Snapshot source size differs from enrolled disk.")
+        existing = self.state["snapshots"].get(snapshot_name)
+        require(existing is None or str(existing["id"]) == snap_id, "Snapshot name was reused; refusing replacement.")
+        actual = self.cloud.get(self.t.path("disks", source["name"]))
+        require(actual and rid(actual) == str(source["id"]), "Source disk is missing or its name was reused.")
+        require(config_view(self.vm) == self.state["vm_config"], "VM configuration drifted.")
+        def before(value, cutoff):
+            try:
+                return bool(value and cutoff) and datetime.fromisoformat(value.replace("Z", "+00:00")) <= datetime.fromisoformat(cutoff.replace("Z", "+00:00"))
+            except (ValueError, TypeError):
+                return False
+        fresh = self.vm["status"] == "TERMINATED" and actual.get("users") == [self.vm["selfLink"]] and before(self.vm.get("lastStartTimestamp"), snap.get("creationTimestamp")) and before(actual.get("lastAttachTimestamp"), snap.get("creationTimestamp"))
+        result = {k: copy.deepcopy(snap[k]) for k in ("name", "id", "selfLink", "sourceDisk", "sourceDiskId", "diskSizeGb", "status", "storageBytes", "storageLocations", "snapshotType", "creationTimestamp") if k in snap}
+        result.update(imported=True, restore_verified=False, removal_eligible=bool(fresh),
+                      sourceLastAttachTimestamp=actual.get("lastAttachTimestamp") if fresh else None,
+                      vmLastStartTimestamp=self.vm.get("lastStartTimestamp") if fresh else None)
+        return result
+
     def plan(self, action, **options):
         require(self.state is not None, "Enrollment state required.")
         steps = []
@@ -275,7 +327,7 @@ class Planner:
 
         def snapshot(record, role, snap_name=None):
             snap_name = name(snap_name or f"l4-{role}-{uuid.uuid4().hex[:16]}")
-            add("snapshot", disk=record, role=role, snapshot=snap_name)
+            add("snapshot", disk=record, role=role, snapshot=snap_name, storage_location=self.t.zone.rsplit("-", 1)[0])
             return snap_name
 
         boot = self.state["boot"]
@@ -411,6 +463,8 @@ class Engine:
         require(str(snap.get("sourceDiskId")) == str(saved["sourceDiskId"]) and
                 relative(snap["sourceDisk"]) == relative(saved["sourceDisk"]), "Snapshot source identity changed.")
         if record:
+            require(not saved.get("imported") or saved.get("removal_eligible") is True,
+                    "Imported backup freshness is not proven; take a fresh snapshot before source removal.")
             require(str(snap["sourceDiskId"]) == str(record["id"]) and
                     relative(snap["sourceDisk"]) == self.t.path("disks", record["name"]) and
                     int(snap["diskSizeGb"]) == int(record["sizeGb"]), "Snapshot does not cover this exact source disk.")
@@ -491,6 +545,8 @@ class Engine:
             path = f"projects/{self.t.project}/global/snapshots"
             body = {"name": step["snapshot"], "sourceDisk": self.t.path("disks", disk["name"]),
                     "snapshotType": "STANDARD", "labels": tag}
+            if step.get("storage_location"):
+                body["storageLocations"] = [step["storage_location"]]
         elif kind in {"create", "restore"}:
             path = f"projects/{self.t.project}/zones/{self.t.zone}/disks"
             body = {"name": disk["name"], "sizeGb": str(step["size"]), "labels": tag,
@@ -552,7 +608,10 @@ class Engine:
                     int(snap["diskSizeGb"]) == int(record["sizeGb"]), "Snapshot completion/source verification failed.")
             require(relative(snap["selfLink"]) == self.t.path("snapshots", step["snapshot"]), "Wrong snapshot URI.")
             rid(snap)
-            result = {k: snap[k] for k in ("name", "id", "selfLink", "sourceDisk", "sourceDiskId", "diskSizeGb", "status", "storageBytes") if k in snap}
+            result = {k: snap[k] for k in ("name", "id", "selfLink", "sourceDisk", "sourceDiskId", "diskSizeGb", "status", "storageBytes", "storageLocations", "snapshotType", "creationTimestamp") if k in snap}
+            if step.get("storage_location"):
+                require(snap.get("storageLocations") == [step["storage_location"]], "Snapshot storage location differs from plan.")
+            result["restore_verified"] = False
             result["sourceLastAttachTimestamp"] = step.get("source_last_attach")
             result["vmLastStartTimestamp"] = step.get("vm_last_start")
             return result

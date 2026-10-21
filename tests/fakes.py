@@ -41,6 +41,9 @@ class FakeCloud:
     def get(self, path):
         return copy.deepcopy(self.resources.get(path))
 
+    def list_snapshots(self, project, disk_ids):
+        return [copy.deepcopy(r) for p, r in self.resources.items() if f"projects/{project}/global/snapshots/" in p and str(r.get("sourceDiskId")) in {str(i) for i in disk_ids}]
+
     def mutate(self, method, path, body, request_id):
         self.calls.append((method, path, copy.deepcopy(body), request_id))
         if self.fail_before_mutation:
@@ -61,6 +64,7 @@ class FakeCloud:
             snap_path = T.path("snapshots", body["name"])
             self.next_id += 1
             self.resources[snap_path] = {"id": str(self.next_id), "name": body["name"], "selfLink": snap_path,
+                "storageLocations": body.get("storageLocations", []), "snapshotType": "STANDARD", "creationTimestamp": "2026-10-21T10:00:00Z",
                 "status": "READY", "sourceDisk": body["sourceDisk"], "sourceDiskId": "9999" if self.bad_snapshot_source else disk["id"],
                 "diskSizeGb": disk["sizeGb"], "storageBytes": "1073741824", "labels": body["labels"]}
         elif base_path.endswith("/disks") and method == "POST":
