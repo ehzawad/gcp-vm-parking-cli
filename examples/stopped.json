@@ -1,0 +1,51 @@
+{
+  "resources": {
+    "projects/example-project/zones/asia-southeast1-c/instances/gpu-vm": {
+      "id": "1001",
+      "name": "gpu-vm",
+      "selfLink": "projects/example-project/zones/asia-southeast1-c/instances/gpu-vm",
+      "status": "TERMINATED",
+      "lastStartTimestamp": "2026-10-16T01:00:00Z",
+      "machineType": "zones/asia-southeast1-c/machineTypes/g2-standard-8",
+      "guestAccelerators": [
+        {
+          "acceleratorType": "nvidia-l4",
+          "acceleratorCount": 1
+        }
+      ],
+      "networkInterfaces": [
+        {
+          "name": "nic0",
+          "network": "default",
+          "accessConfigs": [
+            {
+              "natIP": "192.0.2.1"
+            }
+          ]
+        }
+      ],
+      "disks": [
+        {
+          "boot": true,
+          "source": "projects/example-project/zones/asia-southeast1-c/disks/gpu-vm-boot-70gb",
+          "deviceName": "persistent-disk-0",
+          "autoDelete": true,
+          "mode": "READ_WRITE",
+          "interface": "SCSI"
+        }
+      ]
+    },
+    "projects/example-project/zones/asia-southeast1-c/disks/gpu-vm-boot-70gb": {
+      "id": "2001",
+      "name": "gpu-vm-boot-70gb",
+      "selfLink": "projects/example-project/zones/asia-southeast1-c/disks/gpu-vm-boot-70gb",
+      "status": "READY",
+      "lastAttachTimestamp": "2026-10-16T00:00:00Z",
+      "sizeGb": "70",
+      "type": "projects/example-project/zones/asia-southeast1-c/diskTypes/pd-balanced",
+      "users": [
+        "projects/example-project/zones/asia-southeast1-c/instances/gpu-vm"
+      ]
+    }
+  }
+}

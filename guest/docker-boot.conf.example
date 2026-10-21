@@ -1,0 +1,4 @@
+# Deliberate small workload mode. Replace the work-mode drop-in with this file;
+# do not stack the two files. The JSON policy must explicitly allow boot storage.
+[Service]
+ExecStartPre=/usr/bin/python3 /usr/local/lib/l4ctl/storage_guard.py docker-check

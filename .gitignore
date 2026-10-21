@@ -1,0 +1,24 @@
+__pycache__/
+*.pyc
+.l4-state/
+.venv/
+*.egg-info/
+build/
+dist/
+
+# Local runtime, credentials and machine-specific evidence
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.log
+state.json
+journal.json
+*.local.json
+credentials*.json
+application_default_credentials.json
+docs/installed-scripts-readonly.json
+docs/*-results.txt
+docs/*-preview.txt
+.DS_Store
