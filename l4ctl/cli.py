@@ -219,6 +219,28 @@ def main(argv=None):
             except (EOFError, KeyboardInterrupt):
                 return False
 
+        if state and state.get("removed"):
+            readonly = (command == "status" or
+                        command == "snapshots" and args.snapshot_action is None or
+                        command == "storage" and args.size is None)
+            require(readonly, "This target was permanently removed and has no restore source. Enroll a different existing VM.")
+            records = state["removed"]["resources"]
+            require(any(item["kind"] == "instances" and item["name"] == target.vm and
+                        str(item["id"]) == state["vm_id"] for item in records), "Removed-target VM identity is incomplete.")
+            require(any(item["kind"] == "disks" and item["name"] == state["boot"]["name"] and
+                        str(item["id"]) == str(state["boot"]["id"]) for item in records), "Removed-target boot identity is incomplete.")
+            for item in records:
+                require(item["kind"] in {"instances", "disks", "snapshots"}, "Unexpected removed resource kind.")
+                path = target.path(item["kind"], item["name"])
+                require(relative(item["selfLink"]) == path, "Removed resource URI differs from this target.")
+                require(cloud.get(path) is None, "A removed resource name exists again; inspect identity before re-enrolling.")
+                print(f"ABSENT: {item['kind']}/{item['name']} (former id={item['id']})")
+            print("REMOVED: VM, boot disk and retained restore source were permanently deleted.")
+            print("No retained restore snapshot. up cannot restore this removed target.")
+            if command == "storage":
+                print("Tracked allocation: 0 GiB disks; 0 bytes snapshots. Other project resources are outside this inventory.")
+            return 0
+
         if command == "recover":
             require(journal is not None, "No journal exists.")
             print(f"Recovery journal: {journal['status']}")

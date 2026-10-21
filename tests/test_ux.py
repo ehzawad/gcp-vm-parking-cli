@@ -40,6 +40,34 @@ class UXTests(unittest.TestCase):
         self.store.save("state.json", self.state)
         self.cloud.calls.clear()
 
+    def removed_target(self):
+        vm = self.cloud.resources.pop(T.vm_path)
+        disk_path = T.path("disks", self.state["boot"]["name"])
+        disk = self.cloud.resources.pop(disk_path)
+        self.state["removed"] = {"resources": [dict(kind=kind, **{k: item[k] for k in ("id", "name", "selfLink")})
+            for kind, item in (("instances", vm), ("disks", disk))]}
+        self.store.save("state.json", self.state)
+
+    def test_removed_status_verifies_absence_and_has_no_restore_claim(self):
+        self.removed_target()
+        _, output = self.invoke(["status"])
+        self.assertIn("REMOVED", output)
+        self.assertIn("No retained restore snapshot", output)
+        self.assertFalse(self.cloud.calls)
+
+    def test_removed_target_cannot_start_or_allocate(self):
+        self.removed_target()
+        for args in (["up"], ["storage", "add", "job", "100"], ["snapshots", "import", "backup"]):
+            with self.assertRaisesRegex(SafetyError, "permanently removed"):
+                self.invoke(args, answers=["y"])
+        self.assertFalse(self.cloud.calls)
+
+    def test_removed_status_refuses_name_reuse(self):
+        self.removed_target()
+        self.cloud.resources[T.vm_path] = {"id": "9999"}
+        with self.assertRaisesRegex(SafetyError, "exists again"):
+            self.invoke(["status"])
+
     def test_default_up_prompts_then_applies(self):
         _, output = self.invoke(["up"], answers=["y"])
         self.assertIn("Plan:", output)
