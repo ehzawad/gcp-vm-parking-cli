@@ -293,7 +293,7 @@ def main(argv=None):
                             "Attached disk identity differs from enrollment; inspect name reuse.")
             if state:
                 print(f"Boot ledger: {state['boot']['name']} id={state['boot']['id']} parked={state['boot'].get('parked', False)}")
-                print(f"Retained snapshots: {len(state['snapshots'])}; work disks: {len(state['work'])}; test disks: {len(state['tests'])}")
+                print(f"Retained snapshots: {len(state['snapshots'])}; tracked work disks: {sum(not d.get('parked', False) for d in state['work'].values())}; tracked test disks: {sum(not d.get('parked', False) for d in state['tests'].values())}")
             else:
                 print("Not enrolled. Preview init, then pin the displayed numeric IDs before execution.")
             if journal and journal["status"] == "active":

@@ -12,6 +12,7 @@ def inventory():
     return {"resources": {
         T.vm_path: {"id": "1001", "name": T.vm, "selfLink": T.vm_path, "status": "TERMINATED",
                     "lastStartTimestamp": "2026-10-16T01:00:00Z",
+                    "lastStopTimestamp": "2026-10-16T02:00:00Z",
                     "machineType": f"zones/{T.zone}/machineTypes/g2-standard-8",
                     "guestAccelerators": [{"acceleratorType": "nvidia-l4", "acceleratorCount": 1}],
                     "metadata": {"items": [{"key": "secret-test", "value": "DO-NOT-PERSIST"}]},

@@ -303,11 +303,17 @@ class Planner:
                 return bool(value and cutoff) and datetime.fromisoformat(value.replace("Z", "+00:00")) <= datetime.fromisoformat(cutoff.replace("Z", "+00:00"))
             except (ValueError, TypeError):
                 return False
-        fresh = self.vm["status"] == "TERMINATED" and actual.get("users") == [self.vm["selfLink"]] and before(self.vm.get("lastStartTimestamp"), snap.get("creationTimestamp")) and before(actual.get("lastAttachTimestamp"), snap.get("creationTimestamp"))
+        fresh = (self.vm["status"] == "TERMINATED" and actual.get("users") == [self.vm["selfLink"]]
+                 and before(self.vm.get("lastStartTimestamp"), self.vm.get("lastStopTimestamp"))
+                 and before(self.vm.get("lastStopTimestamp"), snap.get("creationTimestamp"))
+                 and before(actual.get("lastAttachTimestamp"), snap.get("creationTimestamp")))
         result = {k: copy.deepcopy(snap[k]) for k in ("name", "id", "selfLink", "sourceDisk", "sourceDiskId", "diskSizeGb", "status", "storageBytes", "storageLocations", "snapshotType", "creationTimestamp") if k in snap}
-        result.update(imported=True, restore_verified=False, removal_eligible=bool(fresh),
+        result.update(imported=True, restore_verified=bool((existing or {}).get("restore_verified", False)), removal_eligible=bool(fresh),
                       sourceLastAttachTimestamp=actual.get("lastAttachTimestamp") if fresh else None,
-                      vmLastStartTimestamp=self.vm.get("lastStartTimestamp") if fresh else None)
+                      vmLastStartTimestamp=self.vm.get("lastStartTimestamp") if fresh else None,
+                      vmLastStopTimestamp=self.vm.get("lastStopTimestamp") if fresh else None)
+        if existing and "restore_validation" in existing:
+            result["restore_validation"] = copy.deepcopy(existing["restore_validation"])
         return result
 
     def plan(self, action, **options):
@@ -465,6 +471,8 @@ class Engine:
         if record:
             require(not saved.get("imported") or saved.get("removal_eligible") is True,
                     "Imported backup freshness is not proven; take a fresh snapshot before source removal.")
+            if saved.get("imported"):
+                require(bool(saved.get("vmLastStopTimestamp")), "Imported backup needs a verified pre-snapshot stop time; re-import it.")
             require(str(snap["sourceDiskId"]) == str(record["id"]) and
                     relative(snap["sourceDisk"]) == self.t.path("disks", record["name"]) and
                     int(snap["diskSizeGb"]) == int(record["sizeGb"]), "Snapshot does not cover this exact source disk.")
@@ -473,6 +481,8 @@ class Engine:
                     "Source disk was reattached after snapshot; take a fresh backup before removal.")
             require(self.vm().get("lastStartTimestamp") == saved.get("vmLastStartTimestamp"),
                     "VM restarted after snapshot; take a fresh backup before removal.")
+            if saved.get("vmLastStopTimestamp"):
+                require(self.vm().get("lastStopTimestamp") == saved["vmLastStopTimestamp"], "VM stop time changed after backup; inspect freshness.")
         return snap
 
     def deletion_phrase(self, record):

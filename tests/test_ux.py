@@ -117,6 +117,18 @@ class UXTests(unittest.TestCase):
         snap = Planner(T, self.cloud, self.state).import_snapshot("existing-backup")
         self.assertFalse(snap["removal_eligible"])
 
+    def test_vm_stopped_after_snapshot_cannot_qualify_import_for_removal(self):
+        self.snapshot()
+        self.cloud.resources[T.vm_path]["lastStopTimestamp"] = "2026-10-22T10:00:00Z"
+        snap = Planner(T, self.cloud, self.state).import_snapshot("existing-backup")
+        self.assertFalse(snap["removal_eligible"])
+
+    def test_missing_stop_time_cannot_qualify_import_for_removal(self):
+        self.snapshot()
+        self.cloud.resources[T.vm_path].pop("lastStopTimestamp")
+        snap = Planner(T, self.cloud, self.state).import_snapshot("existing-backup")
+        self.assertFalse(snap["removal_eligible"])
+
     def test_snapshots_lists_provider_metadata(self):
         self.snapshot()
         _, output = self.invoke(["snapshots"])
